@@ -20,6 +20,7 @@ It is currently released as:
 - Userscript: (most browsers)
   - Stable: [userscript_smaller.user.js](https://github.com/qsniyg/maxurl/blob/master/userscript_smaller.user.js?raw=true) or [OpenUserJS](https://openuserjs.org/scripts/qsniyg/Image_Max_URL)
   - Development: [userscript.user.js](https://github.com/qsniyg/maxurl/blob/master/userscript.user.js?raw=true) (recommended)
+  - Experimental: [userscript.user.js](https://github.com/kpg-anon/maxurl/blob/master/userscript.user.js?raw=true) (includes pending PRs: rotated image downloads, Twitter carousel scoping, Instagram carousel fixes)
   - It serves as the base for everything listed below. It also serves as a node module (used by the reddit bot), and can be embedded in a website.
 - Browser extension: [Firefox](https://addons.mozilla.org/firefox/addon/image-max-url/)
   - Other browsers supporting WebExtensions can sideload the extension through this git repository.

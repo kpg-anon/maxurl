@@ -77,7 +77,7 @@ var __assign = (this && this.__assign) || function() {
 // @description:zh-TW 為10,000多個網站查找更大或原始圖像
 // @description:zh-HK 為10,000多個網站查找更大或原始圖像
 // @namespace         http://tampermonkey.net/
-// @version           2026.2.0
+// @version           2026.3.0
 // @author            qsniyg
 // @homepageURL       https://qsniyg.github.io/maxurl/options.html
 // @supportURL        https://github.com/qsniyg/maxurl/issues
@@ -218,7 +218,7 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 	//var greasyfork_update_url = "https://greasyfork.org/scripts/36662-image-max-url/code/Image%20Max%20URL.user.js";
 	var github_issues_page = "https://github.com/qsniyg/maxurl/issues";
 	var imu_icon = "https://raw.githubusercontent.com/qsniyg/maxurl/b5c5488ec05e6e2398d4e0d6e32f1bbad115f6d2/resources/logo_256.png";
-	var current_version = "2026.2.0";
+	var current_version = "2026.3.0";
 	var imagetab_ok_override = false;
 	var has_ffmpeg_lib = true;
 	// -- Currently this is unused, it'll be used in a future release (to workaround the 1MB and 2MB limits for OUJS and Greasyfork respectively) --
@@ -14282,6 +14282,8 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 		disable_keybind_when_editing: true,
 		enable_gm_download: true,
 		gm_download_max: 15,
+		popup_download_transformed_images: false,
+		rotated_image_max_quality: 0.92,
 		enable_chunked_download: false,
 		// thanks to pax romana on discord for the idea: https://github.com/qsniyg/maxurl/issues/372
 		// this must be false, because it requires a permission
@@ -16876,6 +16878,27 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 			],
 			category: "popup",
 			subcategory: "behavior"
+		},
+		popup_download_transformed_images: {
+			name: "Download transformed images",
+			description: "Exports transformed popup images so manual rotation or flip is kept in downloads. When disabled, downloads use the original media file.",
+			requires: "action:popup",
+			category: "popup",
+			subcategory: "behavior",
+			advanced: true
+		},
+		rotated_image_max_quality: {
+			name: "Maximum quality for transformed JPEG downloads",
+			description: "Caps the quality used when exporting transformed popup images as JPEG. PNG exports remain lossless.",
+			requires: {
+				popup_download_transformed_images: true
+			},
+			type: "number",
+			number_min: 0,
+			number_max: 1,
+			category: "popup",
+			subcategory: "behavior",
+			advanced: true
 		},
 		mouseover_close_key: {
 			name: "Close key",
@@ -23744,7 +23767,7 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 			}
 			// home
 			if (current.tagName === "ARTICLE" && host_url.match(/:\/\/[^/]+\/+(?:[?#].*)?$/)) {
-				var timeel = current.querySelector("a > time");
+				var timeel = current.querySelector("a time");
 				if (!timeel)
 					timeel = current.querySelector("a > div > time");
 				if (timeel) {
@@ -122483,10 +122506,10 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 			host_domain_nowww === "x.com") {
 			return {
 				gallery: function(el, nextprev) {
-					var is_photo_a = function(el) {
-						return el.tagName === "A" && el.href && /\/status\/+[0-9]+\/+photo\/+/.test(el.href);
+					var is_twitter_photo_anchor = function(el) {
+						return el.tagName === "A" && el.href && /\/status\/+[0-9]+\/+photo\/+([0-9]+)(?:[/?#].*)?$/.test(el.href);
 					};
-					var get_img_from_photo_a = function(el) {
+					var get_twitter_photo_media_el = function(el) {
 						var imgel = el.querySelector("img");
 						if (imgel) {
 							// don't return the <img> element because opacity: 0
@@ -122496,43 +122519,63 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 						}
 						return imgel;
 					};
-					var get_nextprev = function(el) {
-						if (nextprev) {
-							return el.nextElementSibling;
-						} else {
-							return el.previousElementSibling;
-						}
+					var get_twitter_tweet_article = function(el) {
+						var tweet_article = common_functions["get_parent_el_matching"](el, function(x) {
+							return x.tagName === "ARTICLE" && x.getAttribute("data-testid") === "tweet";
+						});
+						if (tweet_article)
+							return tweet_article;
+						return common_functions["get_parent_el_matching"](el, function(x) {
+							return x.tagName === "ARTICLE";
+						});
 					};
-					var get_photoel_from_photo_container = function(nextel) {
-						if (nextel.tagName === "A") {
-							return get_img_from_photo_a(nextel);
-						} else if (nextel.tagName === "DIV") {
-							var childid = nextprev ? 0 : (nextel.children.length - 1);
-							if (nextel.children.length > 0 && is_photo_a(nextel.children[childid])) {
-								return get_img_from_photo_a(nextel.children[childid]);
-							}
-						} else {
-							return "default";
-						}
-					};
-					// tweet albums: https://twitter.com/phoronix/status/1229117085432926209
-					var current = el;
-					while ((current = current.parentElement)) {
-						if (is_photo_a(current)) {
-							var nextel = get_nextprev(current);
-							if (nextel) {
-								return get_photoel_from_photo_container(nextel);
-							} else {
-								var parent = current.parentElement;
-								var sibling = get_nextprev(parent);
-								if (sibling) {
-									return get_photoel_from_photo_container(sibling);
-								}
-							}
+					var get_twitter_photo_status_base = function(el) {
+						var normalized = common_functions["twitter_normalize_status_link"](el.href);
+						if (!normalized)
 							return null;
-						}
+						return normalized;
+					};
+					var get_twitter_photo_num = function(el) {
+						var match = el.href.match(/\/status\/+[0-9]+\/+photo\/+([0-9]+)(?:[/?#].*)?$/);
+						if (!match)
+							return null;
+						return parseInt(match[1], 10);
+					};
+					var source_el = el;
+					if (!source_el || !source_el.parentElement) {
+						source_el = options.element || el;
 					}
-					return "default";
+					var current_anchor = common_functions["get_parent_el_matching"](source_el, is_twitter_photo_anchor);
+					if (!current_anchor) {
+						return "default";
+					}
+					var current_status_base = get_twitter_photo_status_base(current_anchor);
+					if (!current_status_base) {
+						return "default";
+					}
+					var article = get_twitter_tweet_article(current_anchor);
+					if (!article) {
+						return "default";
+					}
+					var photo_anchors = [];
+					array_foreach(article.querySelectorAll("a"), function(anchor) {
+						if (is_twitter_photo_anchor(anchor) &&
+							get_twitter_photo_status_base(anchor) === current_status_base) {
+							photo_anchors.push(anchor);
+						}
+					});
+					photo_anchors.sort(function(a, b) {
+						return get_twitter_photo_num(a) - get_twitter_photo_num(b);
+					});
+					var current_index = array_indexof(photo_anchors, current_anchor);
+					if (current_index < 0) {
+						return "default";
+					}
+					current_index += nextprev ? 1 : -1;
+					if (current_index < 0 || current_index >= photo_anchors.length) {
+						return null;
+					}
+					return get_twitter_photo_media_el(photo_anchors[current_index]) || null;
 				},
 				element_ok: function(el) {
 					//var tweet = common_functions["get_twitter_video_tweet"](el, window);
@@ -124469,9 +124512,9 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 		// https://codepen.io/Rnksts/full/KKdJWvq
 		return "data:image/svg+xml," + encodeURIComponent(svgdoc);
 	};
-	var get_canvas_src = function(el, format) {
+	var get_canvas_src = function(el, format, quality) {
 		try {
-			return el.toDataURL(format);
+			return el.toDataURL(format, quality);
 		} catch (e) {
 			console_error(e);
 			// "Tainted canvases may not be exported", CORS error in some pages
@@ -128539,6 +128582,7 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 		var popup_cursorjitterY = 0;
 		var popup_is_fullscreen = false;
 		var popup_last_zoom = null;
+		var popup_transforms_state = null;
 		var popup_client_rect_cache = null;
 		var last_popup_client_rect_cache = 0;
 		var popup_media_client_rect_cache = null;
@@ -128829,6 +128873,7 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 			popup_wheel_cb = null;
 			popup_update_pos_func = null;
 			popup_update_zoom_func = null;
+			popup_transforms_state = null;
 			popup_client_rect_cache = null;
 			popup_is_fullscreen = false;
 			last_popup_client_rect_cache = 0;
@@ -131257,10 +131302,17 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 							var changed;
 							return __generator(this, function(_a) {
 								switch (_a.label) {
-									case 0: return [4 /*yield*/, trigger_gallery(isright ? 1 : -1)];
+									case 0:
+										if (gallery_navigating)
+											return [2 /*return*/];
+										gallery_navigating = true;
+										_a.label = 1;
 									case 1:
+										_a.trys.push([1, , 5, 6]);
+										return [4 /*yield*/, trigger_gallery(isright ? 1 : -1)];
+									case 2:
 										changed = _a.sent();
-										if (!!changed) return [3 /*break*/, 3];
+										if (!!changed) return [3 /*break*/, 4];
 										if (is_scroll) {
 											if (isright && settings.scroll_past_gallery_end_to_close) {
 												resetpopups();
@@ -131268,10 +131320,14 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 											}
 										}
 										return [4 /*yield*/, create_ui()];
-									case 2:
+									case 3:
 										_a.sent();
-										_a.label = 3;
-									case 3: return [2 /*return*/];
+										_a.label = 4;
+									case 4: return [3 /*break*/, 6];
+									case 5:
+										gallery_navigating = false;
+										return [7 /*endfinally*/];
+									case 6: return [2 /*return*/];
 								}
 							});
 						});
@@ -131772,7 +131828,7 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 							}
 						}
 					}
-					var is_video, is_audio, is_stream, newobj, estop, estop_pd, initial_zoom_behavior, last_zoom_behavior, use_last_zoom, bgcolor, fgcolor, textcolor, shadowcolor, enable_mask_styles, old_mask_opacity, setup_mask_el, outerdiv, zoom_move_effect_enabled, transition_effects, temp_transition_effects, fade_s, orig_transition_string, temp_transition_string, div, popupshown, transparent_gif, styles_variables, outer_thresh, border_thresh, top_thresh, top_mb, viewport, vw, vh, v_mx, v_my, update_vwh, set_top, set_left, set_lefttop, set_audio_size, el_dimensions, add_link, update_img_display, visibility_workarounds, check_visibility_workaround, apply_visibility_workaround, check_img_visibility, img_naturalHeight, img_naturalWidth, imgh, imgw, setup_initial_zoom, get_imghw_for_fit, max_width, max_height, initialpos, set_popup_size_helper, set_popup_width, set_popup_height, defaultopacity, get_popup_dimensions, btndown, ui_els, text_direction, popup_el_style, cached_previmages, cached_nextimages, create_containerel, ui_visible, a, update_popup_clickthrough, attr, click_close, orig_a_cursor, orig_img_cursor, currentmode, parsed_headers;
+					var is_video, is_audio, is_stream, newobj, estop, estop_pd, initial_zoom_behavior, last_zoom_behavior, use_last_zoom, bgcolor, fgcolor, textcolor, shadowcolor, enable_mask_styles, old_mask_opacity, setup_mask_el, outerdiv, zoom_move_effect_enabled, transition_effects, temp_transition_effects, fade_s, orig_transition_string, temp_transition_string, div, popupshown, transparent_gif, styles_variables, outer_thresh, border_thresh, top_thresh, top_mb, viewport, vw, vh, v_mx, v_my, update_vwh, set_top, set_left, set_lefttop, set_audio_size, el_dimensions, add_link, update_img_display, visibility_workarounds, check_visibility_workaround, apply_visibility_workaround, check_img_visibility, img_naturalHeight, img_naturalWidth, imgh, imgw, setup_initial_zoom, get_imghw_for_fit, max_width, max_height, initialpos, set_popup_size_helper, set_popup_width, set_popup_height, defaultopacity, get_popup_dimensions, btndown, ui_els, text_direction, popup_el_style, cached_previmages, cached_nextimages, gallery_navigating, create_containerel, ui_visible, a, update_popup_clickthrough, attr, click_close, orig_a_cursor, orig_img_cursor, currentmode, parsed_headers;
 					return __generator(this, function(_a) {
 						switch (_a.label) {
 							case 0:
@@ -132419,6 +132475,7 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 								}
 								cached_previmages = 0;
 								cached_nextimages = 0;
+								gallery_navigating = false;
 								create_containerel = function(x, y, margin, boundingclientrect) {
 									var topbarel = document_createElement("div");
 									set_el_all_initial(topbarel);
@@ -134887,6 +134944,7 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 					});
 				} catch (e) {
 					console_error(e);
+					delay_handle_triggering = false;
 					//console.trace();
 					// this doesn't work
 					//makePopup(source.src);
@@ -134936,6 +134994,9 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 			if (helpers && helpers.gallery) {
 				gallery = function(el, nextprev) {
 					var value = helpers.gallery(el, nextprev);
+					if (typeof value === "string") {
+						return value;
+					}
 					if (value || value === null) {
 						if (!value)
 							return value;
@@ -135203,6 +135264,9 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 			return { transforms: transforms, types: transform_types };
 		};
 		var get_popup_transforms = function() {
+			if (popup_transforms_state) {
+				return deepcopy(popup_transforms_state);
+			}
 			var style = null;
 			if (popups && popups[0]) {
 				var media = get_popup_media_el();
@@ -135211,7 +135275,9 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 				}
 			}
 			if (style && style.transform) {
-				return parse_transforms(style.transform);
+				var parsed = parse_transforms(style.transform);
+				popup_transforms_state = deepcopy(parsed);
+				return parsed;
 			} else {
 				return { transforms: [], types: {} };
 			}
@@ -135219,7 +135285,14 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 		var stringify_transforms = function(transforms) {
 			return transforms.transforms.join(" ");
 		};
+		var sync_popup_transform_types = function(transforms) {
+			var parsed = parse_transforms(stringify_transforms(transforms));
+			transforms.transforms = parsed.transforms;
+			transforms.types = parsed.types;
+			return transforms;
+		};
 		var set_popup_transforms = function(transforms) {
+			popup_transforms_state = deepcopy(transforms);
 			var media = get_popup_media_el();
 			if (media) {
 				media.parentElement.parentElement.style.transform = stringify_transforms(transforms);
@@ -135231,14 +135304,38 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 				index = transforms.types.rotate[0];
 			} else {
 				transforms.transforms.unshift("rotate(0deg)");
+				sync_popup_transform_types(transforms);
+				index = transforms.types.rotate[0];
 			}
-			var match = transforms.transforms[index].match(/^rotate\(([-0-9]+)deg\)$/);
+			var match = transforms.transforms[index].match(/^rotate\(([-0-9.]+)deg\)$/);
 			var deg = 0;
 			if (match) {
-				deg = parseInt(match[1]);
+				deg = parseFloat(match[1]);
 			}
 			return {
 				deg: deg,
+				index: index
+			};
+		};
+		var get_scale_data_from_transforms = function(transforms) {
+			var index = 0;
+			if ("scale" in transforms.types) {
+				index = transforms.types.scale[0];
+			} else {
+				transforms.transforms.push("scale(1,1)");
+				sync_popup_transform_types(transforms);
+				index = transforms.types.scale[0];
+			}
+			var match = transforms.transforms[index].match(/^scale\(([-0-9.]+)\s*,\s*([-0-9.]+)\)$/);
+			var scaleh = 1;
+			var scalev = 1;
+			if (match) {
+				scaleh = parseFloat(match[1]);
+				scalev = parseFloat(match[2]);
+			}
+			return {
+				scaleh: scaleh,
+				scalev: scalev,
 				index: index
 			};
 		};
@@ -137144,8 +137241,295 @@ var __generator = (this && this.__generator) || function(thisArg, body) {
 			else
 				return null;
 		};
+		var normalize_rotation = function(rotation) {
+			rotation = rotation % 360;
+			if (rotation < 0)
+				rotation += 360;
+			if (Math_abs(rotation - Math_round(rotation)) < 0.000001)
+				rotation = Math_round(rotation);
+			return rotation;
+		};
+		var get_rotated_canvas_bounds = function(width, height, rotation) {
+			rotation = normalize_rotation(rotation);
+			if (rotation === 0 || rotation === 180) {
+				return {
+					width: width,
+					height: height
+				};
+			}
+			if (rotation === 90 || rotation === 270) {
+				return {
+					width: height,
+					height: width
+				};
+			}
+			var radians = rotation * Math.PI / 180;
+			return {
+				width: Math.ceil(Math_abs(width * Math.cos(radians)) + Math_abs(height * Math.sin(radians))),
+				height: Math.ceil(Math_abs(width * Math.sin(radians)) + Math_abs(height * Math.cos(radians)))
+			};
+		};
+		var dataurl_to_blob = function(dataurl, cb) {
+			var match = dataurl && dataurl.match(/^data:([^;,]*)(;base64)?,([\s\S]*)$/);
+			if (!match) {
+				cb(null);
+				return;
+			}
+			try {
+				var data = null;
+				if (match[2]) {
+					var binary = atob(match[3]);
+					var bytes = new Uint8Array(binary.length);
+					for (var i = 0; i < binary.length; i++) {
+						bytes[i] = binary.charCodeAt(i);
+					}
+					data = bytes;
+				} else {
+					data = decodeURIComponent(match[3]);
+				}
+				var blob_options = null;
+				if (match[1]) {
+					blob_options = {
+						type: match[1]
+					};
+				}
+				new_blob(data, function(blob) {
+					cb(blob);
+				}, blob_options);
+			} catch (e) {
+				console_error(e);
+				cb(null);
+			}
+		};
+		var get_canvas_blob = function(canvas, mime, quality, cb) {
+			var fallback = function() {
+				var dataurl = get_canvas_src(canvas, mime, quality);
+				if (!dataurl) {
+					cb(null);
+					return;
+				}
+				dataurl_to_blob(dataurl, cb);
+			};
+			if (!canvas.toBlob) {
+				fallback();
+				return;
+			}
+			try {
+				canvas.toBlob(function(blob) {
+					if (blob) {
+						cb(blob);
+					} else {
+						fallback();
+					}
+				}, mime, quality);
+			} catch (e) {
+				console_error(e);
+				fallback();
+			}
+		};
+		var popup_rotated_export_contenttypes = {
+			jpg: "image/jpeg",
+			jpeg: "image/jpeg",
+			jpe: "image/jpeg",
+			jfif: "image/jpeg",
+			png: "image/png",
+			apng: "image/png",
+			webp: "image/webp"
+		};
+		var get_popup_rotated_export_ext = function(source) {
+			if (!source || typeof source !== "string")
+				return null;
+			source = source.trim();
+			if (!source)
+				return null;
+			var source_value = source;
+			if (/^\.[a-z0-9]+$/i.test(source_value)) {
+				source = source_value.replace(/^\./, "");
+			} else if (/^data:/i.test(source_value)) {
+				var dataurl_match = source_value.match(/^data:([^;,]+)/i);
+				if (!dataurl_match)
+					return null;
+				source = get_ext_from_contenttype(dataurl_match[1]);
+			} else {
+				var basename_split = url_basename(source_value, {
+					split_ext: true,
+					known_ext: true
+				});
+				source = basename_split[1];
+				if (!source) {
+					var format_match = source_value.match(/[?&#](?:format|fm|output|type)=([a-z0-9]+)/i);
+					if (format_match)
+						source = format_match[1];
+				}
+			}
+			if (!source || typeof source !== "string")
+				return null;
+			source = source.toLowerCase();
+			if (!(source in popup_rotated_export_contenttypes))
+				return null;
+			return source;
+		};
+		var get_popup_rotated_export_quality = function() {
+			var quality = parseFloat(settings.rotated_image_max_quality);
+			if (isNaN(quality))
+				quality = 0.92;
+			return Math_min(Math_max(quality, 0), 1);
+		};
+		var get_popup_rotated_export_options = function(filename, urls, rotation, format_ext) {
+			var ext = null;
+			var ext_sources = [filename];
+			if (format_ext)
+				ext_sources.push(format_ext);
+			for (var i = 0; i < urls.length; i++) {
+				ext_sources.push(urls[i]);
+			}
+			for (var i = 0; i < ext_sources.length; i++) {
+				ext = get_popup_rotated_export_ext(ext_sources[i]);
+				if (ext)
+					break;
+			}
+			var mime = ext ? popup_rotated_export_contenttypes[ext] : "image/png";
+			var transparent_corners = normalize_rotation(rotation) % 90 !== 0;
+			if (transparent_corners && mime === "image/jpeg")
+				mime = "image/png";
+			if (mime === "image/webp")
+				mime = "image/png";
+			return {
+				mime: mime,
+				quality: mime === "image/jpeg" ? get_popup_rotated_export_quality() : void 0
+			};
+		};
+		var get_popup_rotated_export_filename = function(filename, mime) {
+			var source_name = filename;
+			if (!source_name || !source_name.length)
+				source_name = "download";
+			var split = url_basename(source_name, {
+				split_ext: true
+			});
+			var base = split[0] || source_name;
+			var ext = get_ext_from_contenttype(mime) || split[1];
+			if (!ext)
+				return source_name;
+			return base + "." + ext;
+		};
+		var export_popup_transformed_image = function(export_media, current_popup_obj, current_filename, current_contentlength, current_format_ext, rotation, scale_data, cleanup_cb, cb) {
+			var export_width = export_media.naturalWidth || export_media.width;
+			var export_height = export_media.naturalHeight || export_media.height;
+			if (!export_width || !export_height) {
+				if (cleanup_cb)
+					cleanup_cb();
+				return cb(false);
+			}
+			var canvas = document_createElement("canvas");
+			var bounds = get_rotated_canvas_bounds(export_width, export_height, rotation);
+			canvas.width = bounds.width;
+			canvas.height = bounds.height;
+			var context = canvas.getContext("2d");
+			if (!context) {
+				if (cleanup_cb)
+					cleanup_cb();
+				return cb(false);
+			}
+			try {
+				context.translate(bounds.width / 2, bounds.height / 2);
+				if (rotation)
+					context.rotate(rotation * Math.PI / 180);
+				if (scale_data.scaleh !== 1 || scale_data.scalev !== 1)
+					context.scale(scale_data.scaleh, scale_data.scalev);
+				context.drawImage(export_media, -export_width / 2, -export_height / 2, export_width, export_height);
+			} catch (e) {
+				console_error(e);
+				if (cleanup_cb)
+					cleanup_cb();
+				return cb(false);
+			}
+			var source_urls = [
+				current_popup_obj && current_popup_obj.url,
+				get_popup_media_url(),
+				export_media.currentSrc,
+				export_media.src
+			];
+			var export_options = get_popup_rotated_export_options(current_filename, source_urls, rotation, current_format_ext);
+			get_canvas_blob(canvas, export_options.mime, export_options.quality, function(blob) {
+				if (cleanup_cb)
+					cleanup_cb();
+				if (!blob) {
+					return cb(false);
+				}
+				var blob_mime = blob.type || export_options.mime;
+				var filename = get_popup_rotated_export_filename(current_filename, blob_mime);
+				do_blob_download(blob, filename);
+				return cb(true);
+			});
+		};
+		var load_popup_export_image = function(current_popup_obj, cb) {
+			if (!current_popup_obj || !current_popup_obj.url || !/^https?:\/\//i.test(current_popup_obj.url)) {
+				return cb(null);
+			}
+			check_image_get([deepcopy(current_popup_obj)], function(img) {
+				if (!img || img.tagName !== "IMG") {
+					return cb(null);
+				}
+				return cb(img, function() {
+					check_image_unref(img);
+				});
+			}, {
+				running: true,
+				incomplete_image: false,
+				incomplete_video: false
+			});
+		};
 		var download_popup_image = function() {
-			do_download(popup_obj, popup_obj.filename, popup_contentlength);
+			if (!settings.popup_download_transformed_images) {
+				do_download(popup_obj, popup_obj.filename, popup_contentlength);
+				return;
+			}
+			var media = get_popup_media_el();
+			if (!media || media.tagName !== "IMG") {
+				do_download(popup_obj, popup_obj.filename, popup_contentlength);
+				return;
+			}
+			var transforms = get_popup_transforms();
+			var rotation_data = get_rotation_data_from_transforms(transforms);
+			var scale_data = get_scale_data_from_transforms(transforms);
+			var rotation = normalize_rotation(rotation_data.deg);
+			var needs_export = rotation !== 0 || scale_data.scaleh !== 1 || scale_data.scalev !== 1;
+			if (!needs_export) {
+				do_download(popup_obj, popup_obj.filename, popup_contentlength);
+				return;
+			}
+			var width = media.naturalWidth || media.width;
+			var height = media.naturalHeight || media.height;
+			if (!width || !height) {
+				do_download(popup_obj, popup_obj.filename, popup_contentlength);
+				return;
+			}
+			var current_popup_obj = popup_obj ? deepcopy(popup_obj) : popup_obj;
+			var current_filename = current_popup_obj && current_popup_obj.filename;
+			var current_contentlength = popup_contentlength;
+			var current_format_ext = current_popup_obj && current_popup_obj.format_vars && current_popup_obj.format_vars.ext;
+			var fallback_download = function() {
+				do_download(current_popup_obj, current_filename, current_contentlength);
+			};
+			var try_requested_export = function() {
+				load_popup_export_image(current_popup_obj, function(export_media, cleanup_cb) {
+					if (!export_media) {
+						fallback_download();
+						return;
+					}
+					export_popup_transformed_image(export_media, current_popup_obj, current_filename, current_contentlength, current_format_ext, rotation, scale_data, cleanup_cb, function(success) {
+						if (!success) {
+							fallback_download();
+						}
+					});
+				});
+			};
+			export_popup_transformed_image(media, current_popup_obj, current_filename, current_contentlength, current_format_ext, rotation, scale_data, null, function(success) {
+				if (success) {
+					return;
+				}
+				try_requested_export();
+			});
 		};
 		var download_popup_media = function() {
 			if (popup_obj.media_info && popup_obj.media_info.delivery && settings.enable_stream_download) {
